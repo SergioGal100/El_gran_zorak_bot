@@ -25,11 +25,6 @@
       <name>m2-dv8tion</name>
       <url>https://m2.dv8tion.net/releases</url>
     </repository>
-    <repository>
-      <id>lavalink</id>
-      <name>Lavalink releases (youtube-source)</name>
-      <url>https://maven.lavalink.dev/releases</url>
-    </repository>
   </repositories>
 
   <!-- Force one Jackson version for every module: lavaplayer pulls 2.15.2,
@@ -57,13 +52,6 @@
       <groupId>dev.arbjerg</groupId>
       <artifactId>lavaplayer</artifactId>
       <version>2.2.7</version>
-    </dependency>
-    <!-- YouTube support. LavaPlayer's built-in YouTube source is deprecated and broken;
-         this is its maintained replacement. -->
-    <dependency>
-      <groupId>dev.lavalink.youtube</groupId>
-      <artifactId>common</artifactId>
-      <version>1.18.2</version>
     </dependency>
     <dependency>
       <groupId>com.discord4j</groupId>

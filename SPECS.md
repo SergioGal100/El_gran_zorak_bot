@@ -9,19 +9,22 @@ local files and online sources (including YouTube).
 |---|---|---|
 | Discord API | Discord4J (`com.discord4j:discord4j-core`) | 3.3.3 |
 | Audio loading / decoding | LavaPlayer (`dev.arbjerg:lavaplayer`) | 2.2.7 |
-| YouTube source | youtube-source (`dev.lavalink.youtube:common`) | 1.18.2 |
+| YouTube resolving | yt-dlp (external program, needs Deno) | latest (`yt-dlp -U`) |
 | Voice encryption (DAVE) | libdave natives (`moe.kyokobot.libdave:natives-win-x86-64`) | 0.1.2 |
 | JSON | Jackson, pinned via `jackson-bom` | 2.22.1 |
 | Logging | SLF4J + Logback | 2.0.20 / 1.5.18 |
 
 Build: Maven. Java: 64-bit JVM required (the DAVE native library is 64-bit only).
 
+External programs (for YouTube): `winget install yt-dlp.yt-dlp` and `winget install DenoLand.Deno`
+(yt-dlp needs a JavaScript runtime to read YouTube). Restart VS Code afterwards so PATH updates.
+
 ## Configuration
 
 | Setting | Where | Notes |
 |---|---|---|
 | `DISCORD_TOKEN` | Environment variable | Bot token. Set in the **App** launch config in `.vscode/launch.json`. Never commit it. |
-| `YOUTUBE_REFRESH_TOKEN` | Environment variable (optional) | Google OAuth refresh token so YouTube lets the bot play. On first run without it, the log prints a `google.com/device` code to sign in; the log then prints the token. Add it to the **App** launch config. |
+| `YTDLP_PATH` | Environment variable (optional) | Full path to `yt-dlp.exe` if it isn't on PATH. Defaults to `yt-dlp`. |
 | Log level | `src/main/resources/logback.xml` | `INFO` by default; switch to `DEBUG` for network traces. |
 
 ### Discord setup
@@ -50,7 +53,7 @@ Commands are plain-text messages in a server text channel. DMs are ignored.
    - Playlist loaded → queues the selected track, or the first track if none is selected,
      and replies *"Adding to queue `<title>` (first track of playlist `<name>`)"*
    - Nothing found → *"Nothing found by `<source>`"*
-   - Load error → *"Could not play: `<reason>`"*
+   - Load error, or yt-dlp failure for YouTube → *"Could not play: `<reason>`"*
    - Voice join error or timeout (20 s) → *"Voice error: `<type>` - `<message>`"*
 
 ## Supported sources
@@ -60,17 +63,18 @@ Commands are plain-text messages in a server text channel. DMs are ignored.
 | Local file (absolute path) | `D:\music\song.flac` |
 | YouTube video | `https://www.youtube.com/watch?v=dQw4w9WgXcQ`, `https://youtu.be/dQw4w9WgXcQ` |
 | YouTube Music | `https://music.youtube.com/watch?v=...` |
-| YouTube playlist | `https://www.youtube.com/playlist?list=...` (first/selected track only, see limitations) |
 | SoundCloud, Bandcamp, Vimeo, Twitch, direct HTTP audio links | Any URL LavaPlayer's remote sources accept |
 
-LavaPlayer's built-in YouTube source is deprecated and broken, so it's excluded.
-The `dev.lavalink.youtube` manager is registered in its place.
+LavaPlayer's built-in YouTube source is broken, so it's excluded. YouTube links are handled by
+`YtDlpResolver`: it runs yt-dlp to get the title and a direct audio URL, and LavaPlayer's HTTP
+source plays that URL. No Google account is needed.
 
 ## Architecture
 
 ```
 App (Discord events, commands)
- ├─ AudioPlayerManager (shared)  ── source managers: YouTube, remote, local
+ ├─ YtDlpResolver               ── YouTube link -> title + direct audio URL (runs yt-dlp)
+ ├─ AudioPlayerManager (shared)  ── source managers: remote (HTTP, SoundCloud, ...), local
  └─ GuildMusicManager (one per guild, keyed by guild ID)
      ├─ AudioPlayer       ── LavaPlayer player producing Opus frames
      ├─ TrackScheduler    ── FIFO queue; advances on track end; logs track events
@@ -81,23 +85,25 @@ App (Discord events, commands)
 |---|---|
 | `App.java` | Login, intents, message listener, command parsing, voice channel lookup, joining voice, loading tracks. |
 | `GuildMusicManager.java` | Bundles the player, scheduler and provider for one guild. |
-| `TrackScheduler.java` | Queue, auto-advance, and logs for track start, end, error and stuck events. |
+| `TrackScheduler.java` | Queue, auto-advance, and logs for track start, end, error and stuck events. `titleOf()` gives the display title. |
+| `YtDlpResolver.java` | Detects YouTube links and runs yt-dlp (30 s timeout) to get the title and audio URL. |
 | `D4jAudioProvider.java` | Bridge between LavaPlayer frames and Discord4J's `AudioProvider`. |
 
 ### Flow of `~play`
 
 1. `MessageCreateEvent` → parse the command.
 2. Look up the caller's voice state → `AudioChannel`.
-3. `loadItemOrdered` on LavaPlayer's loader thread.
-4. On load: join the voice channel if needed (DAVE-encrypted, 20 s timeout), then `scheduler.queue(track)`.
-5. Discord4J pulls 20 ms Opus frames from `D4jAudioProvider`.
+3. YouTube link → `YtDlpResolver.resolve()`; the direct URL is loaded and the title stored as track user data.
+4. `loadItemOrdered` on LavaPlayer's loader thread.
+5. On load: join the voice channel if needed (DAVE-encrypted, 20 s timeout), then `scheduler.queue(track)`.
+6. Discord4J pulls 20 ms Opus frames from `D4jAudioProvider`.
 
 ## Known limitations
 
-- **YouTube needs sign-in:** without OAuth, YouTube blocks playback with "This video requires login".
-  The bot signs in through the `TV` client. Use a **secondary Google account**, because YouTube may
-  restrict accounts used by bots. YouTube changes often, so some videos may still fail until
-  `dev.lavalink.youtube:common` is updated.
+- **YouTube depends on yt-dlp:** when YouTube changes, update it with `yt-dlp -U`.
+- **Expiring links:** the direct audio URL expires after a few hours, so a YouTube track queued
+  long before it plays can fail.
+- **YouTube playlists:** only the single video in the link is played (`--no-playlist`).
 - **Playlists:** only one track from a playlist is queued.
 - **No commands for** stop, pause, queue listing, volume, or leaving the channel.
   The bot stays in voice after the queue ends.

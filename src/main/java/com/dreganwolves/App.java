@@ -14,10 +14,6 @@ import com.sedmelluq.discord.lavaplayer.tools.FriendlyException;
 import com.sedmelluq.discord.lavaplayer.track.AudioPlaylist;
 import com.sedmelluq.discord.lavaplayer.track.AudioTrack;
 
-import dev.lavalink.youtube.clients.AndroidVr;
-import dev.lavalink.youtube.clients.Music;
-import dev.lavalink.youtube.clients.Tv;
-import dev.lavalink.youtube.clients.Web;
 import discord4j.common.util.Snowflake;
 import discord4j.core.DiscordClient;
 import discord4j.core.GatewayDiscordClient;
@@ -62,15 +58,7 @@ public class App {
         this.musicManagers = new ConcurrentHashMap<>();
 
         this.playerManager = new DefaultAudioPlayerManager();
-        // YouTube: use the maintained youtube-source manager and skip LavaPlayer's broken built-in one
-        // Tv is the client that plays with OAuth; the others load titles and playlists
-        dev.lavalink.youtube.YoutubeAudioSourceManager youtube =
-                new dev.lavalink.youtube.YoutubeAudioSourceManager(true,
-                        new Music(), new Web(), new AndroidVr(), new Tv());
-        // OAuth: first run with no token prints a google.com/device code in the log;
-        // after signing in, the log prints a refresh token -> put it in YOUTUBE_REFRESH_TOKEN
-        youtube.useOauth2(System.getenv("YOUTUBE_REFRESH_TOKEN"), false);
-        playerManager.registerSourceManager(youtube);
+        // YouTube links go through yt-dlp (see loadAndPlay); LavaPlayer's built-in YouTube source is broken
         AudioSourceManagers.registerRemoteSources(playerManager,
                 com.sedmelluq.discord.lavaplayer.source.youtube.YoutubeAudioSourceManager.class);
         AudioSourceManagers.registerLocalSource(playerManager);
@@ -135,10 +123,30 @@ public class App {
         Guild guild = channel.getGuild().block();
         GuildMusicManager musicManager = getGuildAudioPlayer(guild);
 
-        playerManager.loadItemOrdered(musicManager, trackUrl, new AudioLoadResultHandler() {
+        // YouTube: ask yt-dlp for the title and a direct audio URL, then play that URL
+        String itemToLoad = trackUrl;
+        final String resolvedTitle;
+        if (YtDlpResolver.isYoutubeUrl(trackUrl)) {
+            try {
+                YtDlpResolver.Resolved resolved = YtDlpResolver.resolve(trackUrl);
+                itemToLoad = resolved.audioUrl;
+                resolvedTitle = resolved.title;
+            } catch (java.io.IOException e) {
+                log.warn("yt-dlp could not resolve {}", trackUrl, e);
+                sendMessageToChannel(channel, "Could not play: " + e.getMessage());
+                return;
+            }
+        } else {
+            resolvedTitle = null;
+        }
+
+        playerManager.loadItemOrdered(musicManager, itemToLoad, new AudioLoadResultHandler() {
             @Override
             public void trackLoaded(AudioTrack track) {
-                sendMessageToChannel(channel, "Adding to queue " + track.getInfo().title);
+                if (resolvedTitle != null) {
+                    track.setUserData(resolvedTitle);   // direct URLs report "Unknown title"
+                }
+                sendMessageToChannel(channel, "Adding to queue " + TrackScheduler.titleOf(track));
                 play(channel, voiceChannel, musicManager, track);
             }
 
@@ -148,7 +156,7 @@ public class App {
                 if (firstTrack == null) {
                     firstTrack = playlist.getTracks().get(0);
                 }
-                sendMessageToChannel(channel, "Adding to queue " + firstTrack.getInfo().title
+                sendMessageToChannel(channel, "Adding to queue " + TrackScheduler.titleOf(firstTrack)
                         + " (first track of playlist " + playlist.getName() + ")");
                 play(channel, voiceChannel, musicManager, firstTrack);
             }

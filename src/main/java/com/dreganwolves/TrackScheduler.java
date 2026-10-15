@@ -33,24 +33,30 @@ public class TrackScheduler extends AudioEventAdapter {
         player.startTrack(queue.poll(), false);
     }
 
+    /** Title saved as user data (YouTube via yt-dlp) or, otherwise, the one LavaPlayer read. */
+    public static String titleOf(AudioTrack track) {
+        String title = track.getUserData(String.class);
+        return title != null ? title : track.getInfo().title;
+    }
+
     @Override
     public void onTrackStart(AudioPlayer player, AudioTrack track) {
-        log.info("Track started: {}", track.getInfo().title);
+        log.info("Track started: {}", titleOf(track));
     }
 
     @Override
     public void onTrackException(AudioPlayer player, AudioTrack track, FriendlyException exception) {
-        log.error("Track failed while playing: {}", track.getInfo().title, exception);
+        log.error("Track failed while playing: {}", titleOf(track), exception);
     }
 
     @Override
     public void onTrackStuck(AudioPlayer player, AudioTrack track, long thresholdMs) {
-        log.warn("Track stuck (no audio for {} ms): {}", thresholdMs, track.getInfo().title);
+        log.warn("Track stuck (no audio for {} ms): {}", thresholdMs, titleOf(track));
     }
 
     @Override
     public void onTrackEnd(AudioPlayer player, AudioTrack track, AudioTrackEndReason endReason) {
-        log.info("Track ended: {} ({})", track.getInfo().title, endReason);
+        log.info("Track ended: {} ({})", titleOf(track), endReason);
         if (endReason.mayStartNext) {
             nextTrack();
         }
